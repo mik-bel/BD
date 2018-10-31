@@ -221,23 +221,156 @@ JOIN OSOBY o ON r.ID_OSOBY = o.ID_OSOBY
 where w.DATA > SYSDATE;
 
 CREATE VIEW wycieczki_miejsca AS
-*/
-
-SELECT
-      COUNT(r.ID_OSOBY), r.ID_WYCIECZKI
-FROM REZERWACJE r WHERE r.STATUS !='A'
-group by r.ID_WYCIECZKI;
-
-
-SELECT * FROM (SELECT COUNT(r.ID_OSOBY), r.ID_WYCIECZKI
-               FROM REZERWACJE r
-               WHERE r.STATUS != 'A'
-               group by r.ID_WYCIECZKI) r
-INNER JOIN WYCIECZKI W ON  r.ID_WYCIECZKI = w.ID_WYCIECZKI;
+  SELECT w.KRAJ,
+         w.DATA,
+         w.NAZWA,
+         w.LICZBA_MIEJSC,
+         w.LICZBA_MIEJSC -
+         NVL((SELECT COUNT(*) FROM REZERWACJE r WHERE w.ID_WYCIECZKI = r.ID_WYCIECZKI GROUP BY r.ID_WYCIECZKI),
+             0) AS LICZBA_MIEJSC_WOLNYCH
+FROM WYCIECZKI w;
 
 
+CREATE VIEW dostepne_wyciezki AS
+  SELECT w.KRAJ,
+         w.DATA,
+         w.NAZWA,
+         w.LICZBA_MIEJSC,
+         w.LICZBA_MIEJSC -
+         NVL((SELECT COUNT(*) FROM REZERWACJE r WHERE w.ID_WYCIECZKI = r.ID_WYCIECZKI GROUP BY r.ID_WYCIECZKI),
+             0) AS LICZBA_MIEJSC_WOLNYCH
+  FROM WYCIECZKI w
+  where w.LICZBA_MIEJSC -
+        NVL((SELECT COUNT(*) FROM REZERWACJE r WHERE w.ID_WYCIECZKI = r.ID_WYCIECZKI GROUP BY r.ID_WYCIECZKI),
+             0) > 0
+and (select CURRENT_DATE from DUAL) < w.DATA;
 
-SELECT
-      COUNT(r.ID_OSOBY), r.ID_WYCIECZKI
-FROM REZERWACJE r
-group by r.ID_WYCIECZKI;
+
+CREATE VIEW rezerwacje_do_anulowania AS
+  SELECT r.NR_REZERWACJI as NR_REZERWACJI_DO_ANULOWANIA
+  FROM REZERWACJE r
+         INNER JOIN WYCIECZKI w ON w.ID_WYCIECZKI = r.ID_WYCIECZKI
+  WHERE r.STATUS = 'N'
+    AND w.DATA - (SELECT CURRENT_DATE FROM DUAL) < 7
+AND w.DATA > (SELECT CURRENT_DATE FROM DUAL);
+
+create or replace type type_uczestnicy_wycieczki as object (
+  id_osoby NUMBER,
+  imie     varchar(50),
+  nazwisko varchar(50)
+);
+
+create or replace type tab_uczestnicy_wycieczki as table of type_uczestnicy_wycieczki;
+
+
+
+
+CREATE OR REPLACE FUNCTION uczestnicy_wycieczki(id NUMBER)
+  RETURN tab_uczestnicy_wycieczki
+PIPELINED
+AS
+
+  BEGIN
+    for x in (SELECT r.id_osoby, o.IMIE, o.NAZWISKO
+              from REZERWACJE r
+                     inner join osoby o on o.ID_OSOBY = r.ID_OSOBY
+              where r.ID_WYCIECZKI = id)
+    loop
+      PIPE ROW (type_uczestnicy_wycieczki(x.id_osoby, x.imie, x.nazwisko));
+    end loop;
+    RETURN;
+END uczestnicy_wycieczki;
+
+create or replace type type_rezerwacje_osoby as object (
+  nr_rezerwacji NUMBER
+);
+
+create or replace type tab_rezerwacje_osoby as table of type_rezerwacje_osoby;
+
+
+CREATE OR REPLACE FUNCTION rezerwacje_osoby(id NUMBER)
+  RETURN tab_rezerwacje_osoby PIPELINED
+AS
+  BEGIN
+    for x in (SELECT r.NR_REZERWACJI
+              FROM REZERWACJE r
+                     INNER JOIN OSOBY o ON r.ID_OSOBY = o.ID_OSOBY
+              WHERE o.ID_OSOBY = id)
+    loop
+      PIPE ROW (type_rezerwacje_osoby(x.NR_REZERWACJI));
+    end loop;
+    RETURN;
+END;
+
+
+CREATE OR REPLACE FUNCTION przyszle_rezerwacje_osoby(id NUMBER)
+  RETURN tab_rezerwacje_osoby PIPELINED
+AS
+  BEGIN
+    for x in (SELECT r.NR_REZERWACJI
+              FROM REZERWACJE r
+                     INNER JOIN OSOBY o ON r.ID_OSOBY = o.ID_OSOBY
+                     INNER JOIN wycieczki w ON r.ID_WYCIECZKI = w.ID_WYCIECZKI
+                   WHERE o.ID_OSOBY = id AND w.DATA > (SELECT CURRENT_DATE FROM dual)
+              )
+    loop
+      PIPE ROW (type_rezerwacje_osoby(x.NR_REZERWACJI));
+    end loop;
+    RETURN;
+END;
+
+
+
+CREATE OR REPLACE TYPE type_dostepne_wycieczki AS OBJECT(
+  kraj varchar(50),
+  data date
+);
+
+CREATE OR REPLACE TYPE tab_dostepne_wycieczki AS TABLE OF type_dostepne_wycieczki;
+
+CREATE OR REPLACE FUNCTION dostepne_wycieczki(kraj varchar2, data_od date, data_do date)
+  RETURN tab_dostepne_wycieczki PIPELINED
+AS
+  BEGIN
+    for x in (SELECT w.KRAJ, w.DATA
+              FROM WYCIECZKI w
+              WHERE w.LICZBA_MIEJSC -
+                    NVL(
+                      (SELECT count(*) FROM REZERWACJE r WHERE w.ID_WYCIECZKI = r.ID_WYCIECZKI GROUP BY r.ID_WYCIECZKI),
+                      0) > 0
+                AND ((SELECT CURRENT_DATE FROM DUAL) < w.DATA)
+                AND (w.DATA BETWEEN data_od AND data_do)
+                AND w.KRAJ = kraj)
+    loop
+      PIPE ROW (type_dostepne_wycieczki(x.KRAJ, x.DATA));
+    end loop;
+    RETURN;
+END;
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
